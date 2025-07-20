@@ -1,27 +1,52 @@
 # This workflow will do a clean installation of node dependencies, cache/restore them, build the source code and run tests across different versions of node
-# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-nodejs
+# For more information 
+const { default: makeWASocket, useSingleFileAuthState } = require('@whiskeysockets/baileys');
+const fs = require('fs');
+const axios = require('axios');
 
-name: Node.js WhatsApp Bot
+const { state, saveState } = useSingleFileAuthState('./auth_info.json');
 
-on:
-  push:
-    branches: [main]
+async function startSock() {
+  const sock = makeWASocket({
+    auth: state,
+    printQRInTerminal: true
+  });
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
+  sock.ev.on('creds.update', saveState);
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+  sock.ev.on('messages.upsert', async ({ messages }) => {
+    const msg = messages[0];
+    if (!msg.message || msg.key.fromMe) return;
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: 18
+    const from = msg.key.remoteJid;
+    const body = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
 
-      - name: Install dependencies
-        run: npm install
+    if (body.toLowerCase() === '/menu') {
+      await sock.sendMessage(from, {
+        text: `🎵 *Song Bot Menu*\n\n1. Download Song\n\n_Reply with:_ \n/song <song name>`
+      });
+    }
 
-      - name: Run bot
-        run: node index.js
+    else if (body.toLowerCase().startsWith('/song ')) {
+      const query = body.slice(6);
+      await sock.sendMessage(from, { text: `🔍 Searching for: *${query}*...` });
+
+      try {
+        // Web API (example: YouTube downloader like "api.songdownloader.com")
+        const response = await axios.get(`https://api-v2.vedugh.com/ytmp3?url=https://www.youtube.com/results?search_query=${encodeURIComponent(query)}`);
+
+        if (response.data?.result?.url) {
+          await sock.sendMessage(from, {
+            text: `✅ Found!\n\n🎵 Title: ${response.data.result.title}\n🔗 Link: ${response.data.result.url}`
+          });
+        } else {
+          await sock.sendMessage(from, { text: `❌ Song not found.` });
+        }
+      } catch (e) {
+        await sock.sendMessage(from, { text: `🚫 Error fetching song.` });
+      }
+    }
+  });
+}
+
+startSock();
